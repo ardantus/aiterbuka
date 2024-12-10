@@ -1,5 +1,6 @@
 import httpx
 import logging
+from database import save_chat_to_db, query_response_by_keyword  # Mengimpor sesuai dengan database.py
 
 # Konfigurasi logging
 logging.basicConfig(level=logging.INFO)
@@ -10,8 +11,11 @@ OLLAMA_URL = "http://host.docker.internal:11434"
 def format_response(response_text):
     """Format respons menjadi HTML dengan elemen daftar dan paragraf."""
     try:
-        # Jika respons berisi daftar seperti "1. ...", ubah menjadi elemen <ol>
-        if response_text.startswith("Berikut adalah") or "1." in response_text:
+        if not response_text.strip():
+            return "<p>No response received from the server.</p>"
+
+        # Jika respons berisi daftar (ciri ada "1.")
+        if "1." in response_text:
             items = response_text.split("1.")[1].split("  ")
             formatted = "<ol>"
             for item in items:
@@ -21,14 +25,26 @@ def format_response(response_text):
             return formatted
         else:
             # Jika respons berupa teks biasa, bungkus dalam <p>
-            return f"<p>{response_text}</p>"
+            return f"<p>{response_text.strip()}</p>"
     except Exception as e:
         logger.error(f"Error formatting response: {e}")
-        return f"<p>{response_text}</p>"
+        return f"<p>{response_text.strip()}</p>"
 
 def handle_chat(prompt, model_name):
-    """Panggil API Ollama tanpa streaming dengan pengaturan timeout."""
+    """
+    Handle chat request by first checking the database.
+    If data exists, return it; otherwise, query the AI model and save the result.
+    """
     try:
+        # Cek database terlebih dahulu
+        logger.info("Checking database for existing response...")
+        saved_response = query_response_by_keyword(prompt)
+        if saved_response:
+            logger.info("Response found in database.")
+            return saved_response
+
+        # Jika tidak ditemukan di database, panggil API Ollama
+        logger.info("Response not found in database. Querying AI model...")
         url = f"{OLLAMA_URL}/api/chat"
         headers = {"Content-Type": "application/json"}
         data = {
@@ -37,37 +53,36 @@ def handle_chat(prompt, model_name):
             "stream": False
         }
 
-        # Log permintaan ke API Ollama
-        logger.info(f"Sending request to Ollama: {url}")
         logger.debug(f"Request payload: {data}")
 
-        # Set timeout lebih panjang
-        timeout = httpx.Timeout(180.0)  # 180 detik
+        # Set timeout ke 180 detik
+        timeout = httpx.Timeout(180.0)
         response = httpx.post(url, headers=headers, json=data, timeout=timeout)
 
         # Log status respons
         logger.info(f"Received response from Ollama with status code: {response.status_code}")
-
-        # Raise error jika status bukan 2xx
         response.raise_for_status()
 
         # Parsing respons JSON
         response_data = response.json()
         if "message" in response_data and "content" in response_data["message"]:
             raw_content = response_data["message"]["content"]
-            return format_response(raw_content)  # Format respons sebelum dikembalikan
+
+            # Simpan hasil baru ke database
+            logger.info("Saving new response to database.")
+            save_chat_to_db(prompt, raw_content)
+
+            # Kembalikan hasil yang diformat
+            return format_response(raw_content)
         else:
             logger.error(f"Unexpected response format: {response_data}")
-            return "<p>Unexpected response format from Ollama.</p>"
+            return "<p>Unexpected response format from AI.</p>"
     except httpx.TimeoutException:
         logger.error("Timeout while contacting Ollama.")
         return "<p>Error contacting Ollama: Request timed out. Try a simpler or shorter prompt.</p>"
     except httpx.RequestError as e:
         logger.error(f"Request error: {e}")
         return f"<p>Error contacting Ollama: {e}</p>"
-    except KeyError as e:
-        logger.error(f"KeyError encountered: {e}")
-        return "<p>Unexpected response format from Ollama.</p>"
     except Exception as e:
-        logger.exception(f"An unexpected error occurred: {e}")
+        logger.exception("An unexpected error occurred.")
         return "<p>An unexpected error occurred while contacting Ollama.</p>"
