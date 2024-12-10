@@ -11,6 +11,16 @@ services:
     ports:
       - "5432:5432"
 
+  adminer:
+    image: adminer:latest
+    container_name: adminer
+    ports:
+      - "8080:8080"
+    depends_on:
+      - database
+    environment:
+      ADMINER_DEFAULT_SERVER: database  # Nama layanan database dari docker-compose
+
   backend:
     build:
       context: ./backend
