@@ -1,5 +1,6 @@
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 import logging
 
 # Konfigurasi logging
@@ -8,8 +9,27 @@ logger = logging.getLogger(__name__)
 
 DATABASE_URL = "postgresql://user:password@database:5432/chat_db"
 
+def create_database_and_table():
+    """Buat database dan tabel jika belum ada."""
+    try:
+        # Koneksi ke PostgreSQL tanpa database tertentu
+        with psycopg2.connect(DATABASE_URL.replace("chat_db", "postgres")) as conn:
+            conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+            with conn.cursor() as cursor:
+                # Buat database jika belum ada
+                cursor.execute("SELECT 1 FROM pg_database WHERE datname = 'chat_db'")
+                exists = cursor.fetchone()
+                if not exists:
+                    cursor.execute("CREATE DATABASE chat_db")
+                    logger.info("Database 'chat_db' created successfully.")
+        
+        # Setelah database dibuat, inisialisasi tabel di database
+        init_db()
+    except Exception as e:
+        logger.error(f"Error creating database and table: {e}")
+
 def init_db():
-    """Inisialisasi database dan buat tabel jika belum ada."""
+    """Inisialisasi tabel di database."""
     try:
         with psycopg2.connect(DATABASE_URL) as conn:
             with conn.cursor() as cursor:
@@ -22,9 +42,9 @@ def init_db():
                     )
                 """)
                 conn.commit()
-                logger.info("Database initialized successfully.")
+                logger.info("Table 'chats' initialized successfully.")
     except Exception as e:
-        logger.error(f"Error initializing database: {e}")
+        logger.error(f"Error initializing table: {e}")
 
 def save_chat(prompt, response):
     """Simpan prompt dan respons ke database."""
